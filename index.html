@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scene Classifier</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Instrument+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css.css">
+</head>
+<body>
+  <div class="horizon" aria-hidden="true">
+    <span></span><span></span><span></span><span></span><span></span><span></span>
+  </div>
+
+  <header class="wrap hero">
+    <h1>What place is in this photo?</h1>
+    <p>Upload a picture and a convolutional neural network will tell you whether it shows buildings, a forest, a glacier, a mountain, the sea, or a street.</p>
+    <div class="status waking" id="status" role="status"><i></i><span>Connecting to the model...</span></div>
+  </header>
+
+  <main class="wrap stage">
+    <section aria-label="Upload a photo">
+      <div class="viewfinder" id="viewfinder" tabindex="0" role="button" aria-label="Choose or drop a photo">
+        <span class="corner tl"></span><span class="corner tr"></span>
+        <span class="corner bl"></span><span class="corner br"></span>
+        <img id="preview" alt="Your uploaded photo">
+        <div class="prompt">
+          <strong>Drop a photo here</strong>
+          <span>or click to choose a JPG or PNG</span>
+        </div>
+        <div class="tag" id="tag"></div>
+      </div>
+      <input type="file" id="file" accept="image/*" hidden>
+
+      <div class="actions">
+        <button class="primary" id="classify" disabled>Classify scene</button>
+        <button class="secondary" id="clear" disabled>Clear</button>
+      </div>
+      <div class="error" id="error" role="alert"></div>
+    </section>
+
+    <section class="results" aria-live="polite">
+      <h2>Prediction</h2>
+      <p class="verdict" id="verdict">Add a photo to see how confident the model is for each scene type.</p>
+      <ul class="bars" id="bars"></ul>
+      <p class="note">The model reads images at 150 x 150 pixels, so small details in large photos are lost. Photos that mix scene types (a street beside the sea) may score lower.</p>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    Built with TensorFlow / Keras, Flask and plain JavaScript.
+  </footer>
+
+  <script>
+    // ===== BACKEND LINK =====
+    // Replace with your deployed Flask URL (no trailing slash).
+    // Local testing: "http://127.0.0.1:5000"
+    const BACKEND_URL = "https://your-backend.onrender.com";
+    // ========================
+
+    const CLASSES = ["buildings", "forest", "glacier", "mountain", "sea", "street"];
+    const MAX_MB = 8;
+
+    const $ = (id) => document.getElementById(id);
+    const viewfinder = $("viewfinder"), fileInput = $("file"), preview = $("preview");
+    const classifyBtn = $("classify"), clearBtn = $("clear");
+    const errorBox = $("error"), verdict = $("verdict"), bars = $("bars"), tag = $("tag");
+    const statusEl = $("status");
+
+    let currentFile = null;
+
+    // ---------- Backend status (free hosts sleep, so wake it early) ----------
+    async function pingBackend() {
+      try {
+        const res = await fetch(BACKEND_URL + "/health");
+        if (!res.ok) throw new Error();
+        setStatus("ready", "Model is ready");
+      } catch {
+        setStatus("down", "Can't reach the model. Check BACKEND_URL in index.html.");
+      }
+    }
+    function setStatus(kind, text) {
+      statusEl.className = "status " + kind;
+      statusEl.querySelector("span").textContent = text;
+    }
+
+    // ---------- Empty bars ----------
+    function renderBars(probs) {
+      const entries = CLASSES.map((c) => [c, probs ? probs[c] : 0]);
+      if (probs) entries.sort((a, b) => b[1] - a[1]);
+      bars.innerHTML = "";
+      entries.forEach(([name, p], i) => {
+        const li = document.createElement("li");
+        li.className = "bar-row" + (probs && i === 0 ? " top" : "");
+        li.style.setProperty("--bar-color", `var(--c-${name})`);
+        li.innerHTML =
+          `<span class="name">${name}</span>` +
+          `<span class="track"><span class="fill"></span></span>` +
+          `<span class="pct">${probs ? (p * 100).toFixed(1) + "%" : "-"}</span>`;
+        bars.appendChild(li);
+        requestAnimationFrame(() => {
+          li.querySelector(".fill").style.width = (p * 100) + "%";
+        });
+      });
+    }
+
+    // ---------- File handling ----------
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.classList.toggle("show", Boolean(msg));
+    }
+
+    function setFile(file) {
+      showError("");
+      if (!file) return;
+      if (!file.type.startsWith("image/")) return showError("Please choose an image file (JPG or PNG).");
+      if (file.size > MAX_MB * 1024 * 1024) return showError(`That image is over ${MAX_MB} MB. Choose a smaller one.`);
+
+      currentFile = file;
+      preview.src = URL.createObjectURL(file);
+      viewfinder.classList.add("has-image");
+      tag.classList.remove("show");
+      classifyBtn.disabled = false;
+      clearBtn.disabled = false;
+      verdict.textContent = "Photo added. Select Classify scene.";
+      renderBars(null);
+    }
+
+    function clearAll() {
+      currentFile = null;
+      fileInput.value = "";
+      preview.removeAttribute("src");
+      viewfinder.classList.remove("has-image");
+      tag.classList.remove("show");
+      classifyBtn.disabled = true;
+      clearBtn.disabled = true;
+      showError("");
+      verdict.textContent = "Add a photo to see how confident the model is for each scene type.";
+      bars.innerHTML = "";
+    }
+
+    viewfinder.addEventListener("click", () => fileInput.click());
+    viewfinder.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); }
+    });
+    fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
+    ["dragenter", "dragover"].forEach((ev) =>
+      viewfinder.addEventListener(ev, (e) => { e.preventDefault(); viewfinder.classList.add("dragging"); }));
+    ["dragleave", "drop"].forEach((ev) =>
+      viewfinder.addEventListener(ev, (e) => { e.preventDefault(); viewfinder.classList.remove("dragging"); }));
+    viewfinder.addEventListener("drop", (e) => setFile(e.dataTransfer.files[0]));
+    clearBtn.addEventListener("click", clearAll);
+
+    // ---------- Classify ----------
+    classifyBtn.addEventListener("click", async () => {
+      if (!currentFile) return;
+      showError("");
+      classifyBtn.disabled = true;
+      classifyBtn.textContent = "Classifying...";
+
+      const body = new FormData();
+      body.append("file", currentFile);
+
+      try {
+        const res = await fetch(BACKEND_URL + "/predict", { method: "POST", body });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "The model returned an error.");
+
+        renderBars(data.probabilities);
+        const pct = (data.confidence * 100).toFixed(1);
+        verdict.textContent = data.confidence < 0.5
+          ? `Best guess: ${data.label} (${pct}%). The model is unsure about this one.`
+          : `This looks like ${data.label} (${pct}% confident).`;
+
+        tag.textContent = `${data.label}  ${pct}%`;
+        tag.style.setProperty("--tag-color", `var(--c-${data.label})`);
+        tag.classList.add("show");
+        setStatus("ready", "Model is ready");
+      } catch (err) {
+        showError(err instanceof TypeError
+          ? "Can't reach the backend. Check that it's running and that BACKEND_URL is correct."
+          : err.message);
+      } finally {
+        classifyBtn.disabled = false;
+        classifyBtn.textContent = "Classify scene";
+      }
+    });
+
+    pingBackend();
+  </script>
+</body>
+</html>
