@@ -17,7 +17,7 @@
   <header class="wrap hero">
     <h1>What place is in this photo?</h1>
     <p>Upload a picture and a convolutional neural network will tell you whether it shows buildings, a forest, a glacier, a mountain, the sea, or a street.</p>
-    <div class="status waking" id="status" role="status"><i></i><span>Connecting to the model...</span></div>
+    <div class="status waking" id="status" role="status"><i></i><span>Waking up the model. This can take up to a minute on a first visit.</span></div>
   </header>
 
   <main class="wrap stage">
@@ -71,12 +71,28 @@
 
     let currentFile = null;
 
+    // Ask once for permission to show a "ready" notification (same idea as the AQI page)
+    if ("Notification" in window &&
+        Notification.permission !== "granted" &&
+        Notification.permission !== "denied") {
+      Notification.requestPermission();
+    }
+
     // ---------- Backend status (free hosts sleep, so wake it early) ----------
     async function pingBackend() {
+      const started = Date.now();
       try {
         const res = await fetch(BACKEND_URL + "/health");
         if (!res.ok) throw new Error();
         setStatus("ready", "Model is ready");
+
+        // Only notify if the server was actually asleep (took a few seconds to answer)
+        const wasAsleep = Date.now() - started > 4000;
+        if (wasAsleep && "Notification" in window && Notification.permission === "granted") {
+          new Notification("Scene Classifier is ready!", {
+            body: "The backend has finished waking up. You can classify a photo now."
+          });
+        }
       } catch {
         setStatus("down", "Can't reach the model. Check BACKEND_URL in index.html.");
       }
