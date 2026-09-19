@@ -81,21 +81,30 @@
     // ---------- Backend status (free hosts sleep, so wake it early) ----------
     async function pingBackend() {
       const started = Date.now();
-      try {
-        const res = await fetch(BACKEND_URL + "/health");
-        if (!res.ok) throw new Error();
-        setStatus("ready", "Model is ready");
+      const GIVE_UP_AFTER = 3 * 60 * 1000; // keep trying for up to 3 minutes
 
-        // Only notify if the server was actually asleep (took a few seconds to answer)
-        const wasAsleep = Date.now() - started > 4000;
-        if (wasAsleep && "Notification" in window && Notification.permission === "granted") {
-          new Notification("Scene Classifier is ready!", {
-            body: "The backend has finished waking up. You can classify a photo now."
-          });
+      while (Date.now() - started < GIVE_UP_AFTER) {
+        try {
+          const res = await fetch(BACKEND_URL + "/health", { cache: "no-store" });
+          if (res.ok) {
+            setStatus("ready", "Model is ready");
+
+            // Only notify if the server was actually asleep (took a few seconds to answer)
+            const wasAsleep = Date.now() - started > 4000;
+            if (wasAsleep && "Notification" in window && Notification.permission === "granted") {
+              new Notification("Scene Classifier is ready!", {
+                body: "The backend has finished waking up. You can classify a photo now."
+              });
+            }
+            return;
+          }
+        } catch {
+          // While Render wakes the server, its proxy answers with an error page
+          // that browsers report as a network/CORS failure. Keep retrying.
         }
-      } catch {
-        setStatus("down", "Can't reach the model. Check BACKEND_URL in index.html.");
+        await new Promise((resolve) => setTimeout(resolve, 5000));
       }
+      setStatus("down", "Can't reach the model. Check BACKEND_URL in index.html.");
     }
     function setStatus(kind, text) {
       statusEl.className = "status " + kind;
