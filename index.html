@@ -87,16 +87,23 @@
         try {
           const res = await fetch(BACKEND_URL + "/health", { cache: "no-store" });
           if (res.ok) {
-            setStatus("ready", "Model is ready");
-
-            // Only notify if the server was actually asleep (took a few seconds to answer)
-            const wasAsleep = Date.now() - started > 4000;
-            if (wasAsleep && "Notification" in window && Notification.permission === "granted") {
-              new Notification("Scene Classifier is ready!", {
-                body: "The backend has finished waking up. You can classify a photo now."
-              });
+            const info = await res.json();
+            if (info.model_error) {
+              setStatus("down", "The model failed to load on the server. Check the Render logs.");
+              return;
             }
-            return;
+            if (info.model_ready) {
+              setStatus("ready", "Model is ready");
+
+              const wasAsleep = Date.now() - started > 4000;
+              if (wasAsleep && "Notification" in window && Notification.permission === "granted") {
+                new Notification("Scene Classifier is ready!", {
+                  body: "The backend has finished waking up. You can classify a photo now."
+                });
+              }
+              return;
+            }
+            setStatus("waking", "Server is up. Loading the model...");
           }
         } catch {
           // While Render wakes the server, its proxy answers with an error page
